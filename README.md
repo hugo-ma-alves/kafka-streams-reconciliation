@@ -1,49 +1,31 @@
-# Kafka Streams reconciliation
+# Reconcile and aggregate events using Kafka streams
+
+This repository contains the code used for the following blog post:
+https://www.hugomalves.com/reconcile-and-aggregate-events-using-kafka-streams
+
+This Readme contains the instructions to run the application, and some quick introduction of the issue.
+For more details about the application and the implementation please check the blog post.
 
 
 # Intro
 
 ![Kstream flow](./diagrams/schema.png)
 
-This demo shows how we can use Kafka Streams to create an asynchronous order system.
+This demo shows how we can use Kafka Streams to combine and process incoming events from various sources. Once the aggregation process is complete and the consolidated data is prepared, a new, enriched event will be emitted to notify relevant consumers or systems.
 
-This demo represents an online manufacturer system. The manufacturer company uses this system to receive the orders from the customers and manage the manufacturer and shipping process.
+To demonstrate the issue we will build a asynchronous order system for an online shopping company. The system enables the company to receive customer orders, manage the manufacturing process, and handle shipping, all while maintaining independent services and relying on event-based communication through Kafka topics.
 
-The system is composed by 3 independent services:
-- **Order service**. Receives the orders from the users and submits them to a Kafka topic.
-- **Manufacturer service**. It will list for all new messages in the order topic, and for each one it will request the manufacturer of the products. Here we assume that our company doesn't have stock and has to manufacture every product of the order.
-- **Shipping service**. After all items of the order are manufactured the shipping service can move the order to the shipping phase.
+Upon examining the previous diagram, it becomes clear that the shipping service must be aware of the order status before initiating the shipping process. An order must only be shipped after all products have been manufactured. However, this system lacks a central database to keep track of each order and its status. To address this issue, we will employ **Kafka Streams** to aggregate the event of all the involved topics and emit an enriched event when the order is ready to be shipped.
 
-As seen in the diagram, our 3 components are completely independent. There is no direct communication between them, all the events are sent to Kafka topics. In this event based approach each service can attach to the topics that contain the events they are interested in.
-For example the Manufacturer process reads events from the orders topics to be aware of new orders, and when one product is manufactured it emits an event to the products manufactured topic.
+The **stateful aggregation** we will implement using Kafka Streams, allows the shipping service to know the current status of an order by subscribing to and processing the events associated with both the Order and Products Manufactured topics. By doing so, we can ensure that the shipping service only ships the order once all products within an order have been successfully manufactured. This approach eliminates the need for a central database to monitor the status of each order, as the Kafka Streams application will continuously process and update the order status based on the incoming events. Consequently, this will enable a more efficient and streamlined shipping process, as the shipping service will be automatically informed of the order status and can initiate the shipping process at the appropriate time.
 
+The system is composed of 3 independent services:
 
-# Reconciliate Orders and Manufactured products using KStreams
+* **Order service**. Receives the orders from the users and stores them in a Kafka topic.
 
-The question now, is how the shipping process can be aware that an order was made, and that all products are manufactured before starting the shipping process. Since there is no common database keeping the status of the order, we have to rely only on the data stored in the Kafka topics.
+* **Manufacturer service**. It subscribes to messages in the order topic. When it receives a new message, it will request the manufacturer of the products.
 
-
-We have multiple solutions to solve this problem, we could use polling, a plain Kafka consumer or even a batch. But this demo shows how to do the reconciliation using KStreams. [Kafka Streams](https://kafka.apache.org/documentation/streams/) is an abstraction for the Kafka consumer and producer APIs that allow us to focus on the business code instead of the technical details. 
-
->Kafka Streams is a client library for building applications and microservices, where the input and output data are stored in Kafka clusters. It combines the simplicity of writing and deploying >standard Java and Scala applications on the client side with the benefits of Kafka's server-side cluster technology.
->
->https://kafka.apache.org/documentation/streams/
-
-
-The advantage of Kafka streams is that we can focus on our business logic while the boilerplate code is implemented by the Kafka streams library. Kafka Streams allows us to implement stateless and stateful operations, the solution we are trying to implement is definitely a stateful operation. We have to know the status of the order before deciding to emit or not an event to the shipping topic.
-
-Stateful operations are implemented in KStreams using **State stores**. [State stores](https://kafka.apache.org/21/documentation/streams/developer-guide/processor-api.html#state-stores) are in memory databases backed by RocksDb that are also persisted on a Kafka topic. So even in the case where the app crashes, our data is safe and our application can easily resume after a restart.
-
-## Implementation
-
-The KStream application reads messages from the orders and products manufactured topic, for each message received the application calculates the status of the order and stores it in a State store.
-For example, if the KStream application receives a new message from the Order topic, it will create a new entry on the state store containing the order ID and the IDs of the products that are waiting for manufacturing. For each product manufactured it will also receive a new message, and it will update the order status accordingly in the state store. After all products of an order are manufactured, the KStream application will emit a new message to the shipping topic.
-After this message the order is completed.
-
-Let's see an example of the evolution of the state store for a Order with ID 1 containing 2 products, Product A and Product B.
-As seen in the next image, the state store evolves with the messages received from the orders and products manufactured topic. For each event received it will update the order status in the state store. When it detects that the order is ready to be shipped, the KStream will emit a new message to the shipping topic.
-
-![state store evolution](./diagrams/state_Store.png)
+* **Shipping service**. After all items of the order are manufactured the shipping service can trigger the shipping phase. This service must be able to know the current order status. An order is considered ready to be shipped when all products are manufactured.
 
 
 # How to run the application
@@ -112,3 +94,8 @@ AKHQ  is now accessible in the URL: http://localhost:9090/ui/docker-kafka-server
 
 
 You can try to run this commands in a different order to see how the KStream application reacts to different scenarios. For example, you can try to send the message to the "products manufactured" topic before sending the order to the "orders" topic. You will see that the KStream will handle this case successfully. Due to the asynchronous nature of Kafka the KStream application was built taking into account that the messages can arrive in any order.
+
+# Unit tests
+
+The application contains unit tests for the KStream application. The tests are located in the **ShippingKstreamApplicationTest** class.
+The tests are using the [TopologyTestDriver](https://kafka.apache.org/28/documentation/streams/developer-guide/testing.html) to test the KStream application.
