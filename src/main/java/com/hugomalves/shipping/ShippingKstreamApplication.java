@@ -64,11 +64,11 @@ public class ShippingKstreamApplication {
                                                                               SHIPPING_STATE_STORE_NAME);
 
     //5) Merge both topics, and forward the event emitted by any of the processors to the shipping topic
-    ordersStream.merge(manufacturingStream)
+    ordersStream.merge(manufacturingStream, Named.as("Shipping-Merge"))
                 .to(SHIPPING_TOPIC, Produced.with(keySerde, shippingDtoSerde));
 
     Topology topology = streamsBuilder.build();
-    log.debug(topology.describe().toString());
+    log.info(topology.describe().toString());
 
     return topology;
   }
